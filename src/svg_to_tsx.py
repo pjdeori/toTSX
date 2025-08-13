@@ -1,88 +1,110 @@
 import os
 import re
 
-# 📂 Input/output paths
 SVG_DIR = "./src/app/assets/icons/ui"         # where your SVGs are
 OUTPUT_DIR = './src/app/components/icons/ui'  # where to save React components
-INDEX_FILE = os.path.join(OUTPUT_DIR, 'index.ts')     # index file to generate
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 🧠 Convert kebab/snake case to PascalCase
-def kebab_or_snake_to_pascal(name):
-    return ''.join(word.capitalize() for word in re.split(r'[-_]', name))
+RESERVED_NAMES = {
+    'react', 'class', 'default', 'return', 'function', 'export', 'var',
+    'const', 'let', 'interface', 'enum', 'extends', 'implements', 'type',
+    'await', 'async', 'static', 'super', 'new', 'this', 'switch',
+    'case', 'break', 'continue', 'do', 'while', 'if', 'else', 'try',
+    'catch', 'finally', 'throw', 'for', 'import', 'from'
+}
 
-# 🔄 Convert one SVG to a .tsx component
-def svg_to_react_component(svg_path, output_path, export_list):
-    name = os.path.splitext(os.path.basename(svg_path))[0]
-    component_name = kebab_or_snake_to_pascal(name)
+def to_pascal_case(name):
+    base = ''.join(word.capitalize() for word in re.split(r'[-_]', name))
+    return base + 'Icon' if base.lower() in RESERVED_NAMES else base
 
-    with open(svg_path, 'r', encoding='utf-8') as f:
-        svg = f.read()
-
-    # 🧽 Extract only the <svg>...</svg> block
+def clean_svg(svg: str) -> str:
+    # Extract <svg>...</svg>
     match = re.search(r'<svg[\s\S]*?</svg>', svg)
     if not match:
-        print(f"❌ No <svg> tag found in {svg_path}")
-        return
+        return None
     svg = match.group(0)
 
-    # 🚫 Remove HTML comments (invalid in JSX)
-    svg = re.sub(r'<!--[\s\S]*?-->', '', svg)
+    # Remove comments
+    svg = re.sub(r'<!--.*?-->', '', svg, flags=re.DOTALL)
 
-    # 🧼 Remove fill, stroke, and style attributes
-    svg = re.sub(r'\s(fill|stroke|style)="[^"]*"', '', svg)
+    # Remove fill, stroke, and style attributes
+    svg = re.sub(r'\s+(fill|stroke|style)="[^"]*"', '', svg)
 
-    # 🎨 Ensure fill="currentColor" in opening <svg> tag
-    if 'fill=' not in svg.split('>')[0]:
+    # Add fill="currentColor" if not present in <svg> opening tag
+    opening_tag = re.search(r'<svg[^>]*>', svg).group(0)
+    if 'fill=' not in opening_tag:
         svg = svg.replace('<svg', '<svg fill="currentColor"', 1)
 
-    # 💉 Inject props and className
-    svg = svg.replace('<svg', '<svg className={className} {...props}', 1)
+    return svg
 
-    # 🧱 Create the component
-    component_code = f"""import React from 'react';
+def svg_to_react_component(svg_path, output_path):
+    name = os.path.splitext(os.path.basename(svg_path))[0]
+    component_name = to_pascal_case(name)
 
-const {component_name} = ({{ className = "", ...props }}) => (
+    with open(svg_path, 'r', encoding='utf-8') as f:
+        raw_svg = f.read()
+
+    svg = clean_svg(raw_svg)
+    if not svg:
+        print(f"❌ Skipped (no <svg>): {svg_path}")
+        return
+
+    # Inject className, style, props
+    svg = svg.replace(
+        '<svg', 
+        '<svg className={className} style={{ color }} {...props}', 
+        1
+    )
+
+    component_code = f"""// Generated from "{name}.svg" — auto-generated icon component
+
+import React from 'react';
+
+const {component_name} = ({{ className = "", color = "currentColor", ...props }}) => (
   {svg}
 );
 
 export default {component_name};
 """
 
-    # 💾 Save .tsx file
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(component_code)
 
-    # ➕ Add to export list for index.ts
-    export_list.append(f"export {{ default as {component_name} }} from './{name}';")
     print(f"✅ Converted: {name}.svg → {component_name}.tsx")
 
-# 📂 Process entire folder tree
-def process_folder(svg_dir, output_dir):
-    export_lines = []
-
-    for root, _, files in os.walk(svg_dir):
+def process_folder(input_dir, output_dir):
+    for root, _, files in os.walk(input_dir):
         for file in files:
-            if file.endswith('.svg'):
-                input_path = os.path.join(root, file)
+            if not file.endswith('.svg'):
+                continue
 
-                # Keep relative folder structure
-                relative_path = os.path.relpath(root, svg_dir)
-                output_folder = os.path.join(output_dir, relative_path)
-                os.makedirs(output_folder, exist_ok=True)
+            input_path = os.path.join(root, file)
 
-                base_name = os.path.splitext(file)[0]
-                output_path = os.path.join(output_folder, f"{base_name}.tsx")
+            relative_path = os.path.relpath(root, input_dir)
+            output_folder = os.path.join(output_dir, relative_path)
+            os.makedirs(output_folder, exist_ok=True)
 
-                svg_to_react_component(input_path, output_path, export_lines)
+            output_file = os.path.splitext(file)[0] + '.tsx'
+            output_path = os.path.join(output_folder, output_file)
 
-    # 📦 Generate index.ts with all exports
-    with open(INDEX_FILE, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(sorted(export_lines)))
+            svg_to_react_component(input_path, output_path)
 
-    print(f"\n🧾 index.ts created with {len(export_lines)} exports at: {INDEX_FILE}")
+def generate_index(output_dir):
+    index_path = os.path.join(output_dir, 'index.ts')
+    exports = []
 
-# 🚀 Run the whole thing
+    for filename in os.listdir(output_dir):
+        if filename.endswith('.tsx'):
+            name = os.path.splitext(filename)[0]
+            export_name = to_pascal_case(name)
+            exports.append(f"export {{ default as {export_name} }} from './{name}';")
+
+    with open(index_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(exports))
+
+    print(f"📦 Generated {index_path} with {len(exports)} exports.")
+
 if __name__ == "__main__":
     process_folder(SVG_DIR, OUTPUT_DIR)
+    generate_index(OUTPUT_DIR)
