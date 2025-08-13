@@ -50,19 +50,26 @@ def svg_to_react_component(svg_path, output_path):
         print(f"❌ Skipped (no <svg>): {svg_path}")
         return
 
-    # Inject className, style, props
-    svg = svg.replace(
-        '<svg', 
-        '<svg className={className} style={{ color }} {...props}', 
-        1
-    )
+    svg_jsx = svg.strip()
 
     component_code = f"""// Generated from "{name}.svg" — auto-generated icon component
 
 import React from 'react';
 
-const {component_name} = ({{ className = "", color = "currentColor", ...props }}) => (
-  {svg}
+interface IconProps extends React.SVGProps<SVGSVGElement> {{
+  className?: string;
+  color?: string;
+}}
+
+const {component_name}: React.FC<IconProps> = ({{ className = "", color, ...props }}) => (
+  React.cloneElement(
+    {svg_jsx},
+    {{
+      className,
+      ...(color ? {{ style: {{ color }} }} : {{}}),
+      ...props
+    }}
+  )
 );
 
 export default {component_name};
